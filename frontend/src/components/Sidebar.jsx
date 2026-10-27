@@ -1,35 +1,50 @@
 import React from 'react';
-import { NavLink, useLocation } from 'react-router-dom';
+import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
-  LayoutDashboard,
+  Home,
   Search,
-  Settings,
-  Activity,
+  FolderOpen,
   FileText,
-  Clock,
-  User,
-  ShieldCheck,
-  ChevronRight
+  Pill,
+  FlaskConical,
+  Calendar,
+  Settings,
+  LogOut,
+  Stethoscope,
 } from 'lucide-react';
+import { useAuth } from '../hooks/useAuth';
 
 export default function Sidebar({ mobileOpen = false, onCloseMobile = () => {} }) {
   const location = useLocation();
+  const navigate = useNavigate();
+  const { logout } = useAuth();
 
   // Extract patientId if viewing a patient route (/patients/PID-xxxx/...)
   const patientMatch = location.pathname.match(/\/patients\/([^/]+)/);
-  const activePatientId = patientMatch && !['search', 'verify'].includes(patientMatch[1]) ? patientMatch[1] : null;
+  const activePatientId =
+    patientMatch && !['search', 'verify'].includes(patientMatch[1])
+      ? patientMatch[1]
+      : 'PID-2026-1234';
 
-  const generalItems = [
-    { label: 'Overview Dashboard', path: '/dashboard', icon: LayoutDashboard },
+  const menuItems = [
+    { label: 'Overview', path: '/dashboard', icon: Home },
     { label: 'Search Patient', path: '/patients/search', icon: Search },
-    { label: 'System Settings', path: '/settings', icon: Settings },
+    { label: 'Medical History', path: `/patients/${activePatientId}/history`, icon: FolderOpen },
+    { label: 'Reports', path: `/patients/${activePatientId}/reports`, icon: FileText },
+    { label: 'Prescriptions', path: `/patients/${activePatientId}/prescriptions`, icon: Pill },
+    { label: 'Lab Tests', path: `/patients/${activePatientId}/reports`, icon: FlaskConical },
+    { label: 'Appointments', path: '/dashboard', icon: Calendar },
+    { label: 'Settings', path: '/settings', icon: Settings },
   ];
 
-  const patientItems = activePatientId ? [
-    { label: 'Medical History', path: `/patients/${activePatientId}/history`, icon: Clock },
-    { label: 'Reports & OCR', path: `/patients/${activePatientId}/reports`, icon: Activity },
-    { label: 'Prescriptions', path: `/patients/${activePatientId}/prescriptions`, icon: FileText },
-  ] : [];
+  const handleLogout = async () => {
+    try {
+      await logout();
+      navigate('/login');
+    } catch (err) {
+      navigate('/login');
+    }
+  };
 
   return (
     <>
@@ -42,99 +57,81 @@ export default function Sidebar({ mobileOpen = false, onCloseMobile = () => {} }
       )}
 
       <aside
-        className={`fixed top-0 bottom-0 left-0 z-50 w-64 bg-navy-950 text-slate-300 flex flex-col border-r border-slate-800 transition-transform duration-200 ease-in-out lg:static lg:translate-x-0 ${
+        className={`fixed top-0 bottom-0 left-0 z-50 w-64 bg-[#0B2450] text-slate-300 flex flex-col justify-between border-r border-[#081B3D] transition-transform duration-200 ease-in-out lg:static lg:translate-x-0 ${
           mobileOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
-        {/* Logo / Branding Header */}
-        <div className="p-5 border-b border-slate-800/80 flex items-center gap-3">
-          <div className="w-10 h-10 rounded-2xl bg-teal-500/10 border border-teal-500/30 flex items-center justify-center text-teal-400 shrink-0">
-            <Activity className="w-5 h-5 text-teal-400" />
-          </div>
-          <div className="min-w-0">
-            <h1 className="font-heading font-bold text-white text-base tracking-tight leading-tight truncate">
-              Heterogeneous HMS
-            </h1>
-            <p className="text-[10px] text-teal-400/90 font-mono tracking-wider">DOCTOR TERMINAL</p>
-          </div>
-        </div>
-
-        {/* Navigation Section */}
-        <div className="p-3.5 space-y-1.5 flex-1 overflow-y-auto">
-          <p className="px-3 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-            Clinical Navigation
-          </p>
-
-          {generalItems.map((item) => {
-            const Icon = item.icon;
-            return (
-              <NavLink
-                key={item.path}
-                to={item.path}
-                onClick={onCloseMobile}
-                className={({ isActive }) =>
-                  `flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-semibold transition-all ${
-                    isActive
-                      ? 'bg-teal-600 text-white shadow-sm shadow-teal-900/40 font-bold'
-                      : 'text-slate-400 hover:text-white hover:bg-slate-900/80'
-                  }`
-                }
-              >
-                <div className="flex items-center gap-3 truncate">
-                  <Icon className="w-4 h-4 shrink-0" />
-                  <span className="truncate">{item.label}</span>
-                </div>
-                <ChevronRight className="w-3.5 h-3.5 opacity-40 shrink-0" />
-              </NavLink>
-            );
-          })}
-
-          {/* Active Patient Context Section */}
-          {activePatientId && (
-            <div className="mt-6 pt-4 border-t border-slate-800/80 space-y-1.5">
-              <div className="px-3 py-1 flex items-center justify-between">
-                <span className="text-[10px] font-bold text-teal-400 uppercase tracking-wider">
-                  Active Patient
-                </span>
-                <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-teal-950 text-teal-300 border border-teal-800">
-                  {activePatientId}
-                </span>
-              </div>
-
-              {patientItems.map((item) => {
-                const Icon = item.icon;
-                return (
-                  <NavLink
-                    key={item.path}
-                    to={item.path}
-                    onClick={onCloseMobile}
-                    className={({ isActive }) =>
-                      `flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-semibold transition-all ${
-                        isActive
-                          ? 'bg-teal-600 text-white shadow-sm shadow-teal-900/40 font-bold'
-                          : 'text-slate-400 hover:text-white hover:bg-slate-900/80'
-                      }`
-                    }
-                  >
-                    <div className="flex items-center gap-3 truncate">
-                      <Icon className="w-4 h-4 shrink-0" />
-                      <span className="truncate">{item.label}</span>
-                    </div>
-                    <ChevronRight className="w-3.5 h-3.5 opacity-40 shrink-0" />
-                  </NavLink>
-                );
-              })}
+        {/* Top: Brand Header & Menu */}
+        <div>
+          {/* Logo / Brand Header (Matching reference screens) */}
+          <div className="p-5 border-b border-[#0F326E] flex items-center gap-3">
+            {/* White medical cross logo with ECG */}
+            <div className="w-10 h-10 rounded-2xl bg-white flex items-center justify-center shrink-0 shadow-sm">
+              <svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-6 h-6">
+                <rect x="19" y="5" width="10" height="38" rx="5" fill="#1769E8" />
+                <rect x="5" y="19" width="38" height="10" rx="5" fill="#1769E8" />
+                <path
+                  d="M9 24H16L19 19L23 29L27 15L30 26L32 24H39"
+                  stroke="white"
+                  strokeWidth="2.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
             </div>
-          )}
+            <div className="min-w-0">
+              <h1 className="font-heading font-extrabold text-white text-[15px] tracking-tight leading-tight truncate">
+                Heterogeneous HMS
+              </h1>
+              <p className="text-[10px] text-slate-400 font-medium">Hospital Management System</p>
+            </div>
+          </div>
+
+          {/* Navigation Links */}
+          <nav className="p-3.5 space-y-1">
+            {menuItems.map((item) => {
+              const Icon = item.icon;
+              return (
+                <NavLink
+                  key={item.path + item.label}
+                  to={item.path}
+                  onClick={onCloseMobile}
+                  className={({ isActive }) =>
+                    `flex items-center gap-3.5 px-4 py-3 rounded-2xl text-xs font-semibold transition ${
+                      isActive
+                        ? 'bg-[#1769E8] text-white shadow-md shadow-[#1769E8]/30 font-bold'
+                        : 'text-slate-300 hover:text-white hover:bg-white/10'
+                    }`
+                  }
+                >
+                  <Icon className="w-4 h-4 shrink-0" />
+                  <span>{item.label}</span>
+                </NavLink>
+              );
+            })}
+
+            {/* Logout button */}
+            <button
+              onClick={handleLogout}
+              className="w-full flex items-center gap-3.5 px-4 py-3 rounded-2xl text-xs font-semibold text-slate-300 hover:text-rose-300 hover:bg-rose-500/10 transition text-left"
+            >
+              <LogOut className="w-4 h-4 shrink-0 text-slate-400" />
+              <span>Logout</span>
+            </button>
+          </nav>
         </div>
 
-        {/* Footer info */}
-        <div className="p-4 border-t border-slate-800/80 text-[11px] text-slate-400 flex items-center justify-between bg-slate-950/40">
-          <div className="flex items-center gap-2">
-            <ShieldCheck className="w-4 h-4 text-teal-400" />
-            <span>Consent EMR v1.0</span>
+        {/* Bottom Banner Card (Matching reference 02, 03, 04, 05, 06) */}
+        <div className="p-4">
+          <div className="p-3.5 rounded-2xl bg-[#071A3B] border border-[#0F326E] flex items-center gap-3 shadow-inner">
+            <div className="w-9 h-9 rounded-xl bg-[#1769E8]/20 text-[#1769E8] flex items-center justify-center shrink-0">
+              <Stethoscope className="w-5 h-5 text-[#38BDF8]" />
+            </div>
+            <div>
+              <h4 className="text-xs font-bold text-white leading-tight">Care with Technology</h4>
+              <p className="text-[11px] text-slate-400 mt-0.5 leading-snug">Secure. Simple. Smarter.</p>
+            </div>
           </div>
-          <span className="text-[10px] text-teal-400 font-mono">B.Tech 2026</span>
         </div>
       </aside>
     </>

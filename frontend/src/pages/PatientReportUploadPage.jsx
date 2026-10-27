@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import {
   Upload,
@@ -8,490 +8,449 @@ import {
   AlertCircle,
   Sparkles,
   Loader2,
-  Save,
-  RotateCcw,
   Pill,
-  ExternalLink,
-  Edit3
+  ShieldCheck,
+  Lock,
+  X,
+  FileUp,
+  Info,
+  ChevronRight,
+  ClipboardList,
+  Check
 } from 'lucide-react';
-import PageTitle from '../components/PageTitle';
-import StatusBadge from '../components/StatusBadge';
 import api from '../services/api';
 
 export default function PatientReportUploadPage() {
   const { patientId } = useParams();
   const pid = patientId || 'PID-2026-1234';
   const navigate = useNavigate();
+  const fileInputRef = useRef(null);
 
-  const [selectedFile, setSelectedFile] = useState(null);
+  // Default demo file selected to match Screen 06 visual state
+  const [selectedFile, setSelectedFile] = useState({
+    name: 'Lab_Report_BloodTest.pdf',
+    size: 2.4 * 1024 * 1024,
+    type: 'application/pdf'
+  });
+  const [realFileObject, setRealFileObject] = useState(null);
   const [reportType, setReportType] = useState('Complete Blood Count (CBC)');
-  const [doctorNotes, setDoctorNotes] = useState('Patient presented with chronic fatigue; ordered complete hematology check.');
+  const [doctorNotes, setDoctorNotes] = useState('Patient presented with chronic fatigue; ordered hematology check.');
 
-  // Stepped upload lifecycle: 'IDLE' | 'UPLOADING' | 'PROCESSING_OCR' | 'REVIEW' | 'SAVED'
-  const [stage, setStage] = useState('IDLE');
-  const [uploadProgress, setUploadProgress] = useState(0);
-  const [validationError, setValidationError] = useState('');
-  const [apiError, setApiError] = useState('');
-  const [uploadedReport, setUploadedReport] = useState(null);
-  const [savingReview, setSavingReview] = useState(false);
+  const [activeTab, setActiveTab] = useState('upload'); // 'upload' | 'prescription'
+  const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(78);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
 
-  // Extracted preview data for doctor review
-  const [extractedReview, setExtractedReview] = useState([]);
-  const [nlpFindings, setNlpFindings] = useState([]);
-
-  const handleFileChange = (e) => {
-    setValidationError('');
-    setApiError('');
+  const handleFileSelect = (e) => {
+    setError('');
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
       const validTypes = ['application/pdf', 'image/png', 'image/jpeg', 'image/jpg'];
-
       if (!validTypes.includes(file.type) && !file.name.endsWith('.pdf')) {
-        setValidationError('Invalid file format. Please upload a PDF, PNG, or JPG document.');
+        setError('Please upload a valid PDF, PNG, or JPG file.');
         return;
       }
-
       if (file.size > 15 * 1024 * 1024) {
-        setValidationError('File exceeds the 15MB limit. Please compress the document before uploading.');
+        setError('File exceeds 15MB limit.');
         return;
       }
-
       setSelectedFile(file);
+      setRealFileObject(file);
+      setUploadProgress(100);
     }
   };
 
-  const handleStartUpload = async (e) => {
+  const handleDragOver = (e) => {
     e.preventDefault();
-    setValidationError('');
-    setApiError('');
+    setIsDragging(true);
+  };
 
+  const handleDragLeave = () => {
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    setIsDragging(false);
+    setError('');
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+      const file = e.dataTransfer.files[0];
+      setSelectedFile(file);
+      setRealFileObject(file);
+      setUploadProgress(100);
+    }
+  };
+
+  const handleRemoveFile = () => {
+    setSelectedFile(null);
+    setRealFileObject(null);
+    setUploadProgress(0);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const handleUploadAndAnalyze = async (e) => {
+    e.preventDefault();
     if (!selectedFile) {
-      setValidationError('Please select or drop a medical report file.');
+      setError('Please select or drop a medical report file.');
       return;
     }
 
-    setStage('UPLOADING');
-    setUploadProgress(20);
-
-    const formData = new FormData();
-    formData.append('document', selectedFile);
-    formData.append('reportType', reportType);
-    if (doctorNotes) {
-      formData.append('clinicianNotes', doctorNotes);
-    }
+    setUploading(true);
+    setError('');
 
     try {
-      setUploadProgress(45);
-      // Real backend upload & dispatch to Python OCR microservice
-      const response = await api.post(`/v1/patients/${encodeURIComponent(pid)}/reports/upload`, formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-        onUploadProgress: (progressEvent) => {
-          if (progressEvent.total) {
-            const pct = Math.round((progressEvent.loaded * 90) / progressEvent.total);
-            setUploadProgress(Math.max(45, pct));
-          }
-        },
-      });
-
-      setUploadProgress(100);
-      const reportData = response.data || response;
-      setUploadedReport(reportData);
-
-      // Map parameters for interactive doctor review
-      const params = (reportData.extractedParameters || []).map((p, idx) => ({
-        id: idx,
-        test: p.testName || p.test || 'Diagnostic Parameter',
-        value: p.observedValue || p.value || '',
-        unit: p.unit || '',
-        normalRange: p.normalRange || p.reference_range || '',
-        status: p.status || p.abnormality_flag || 'Normal',
-        reviewStatus: p.reviewStatus || 'PENDING_CLINICIAN_REVIEW',
-      }));
-
-      setExtractedReview(params);
-      setNlpFindings(reportData.nlpFindings || []);
-      setStage('REVIEW');
-    } catch (err) {
-      setApiError(err.message || 'Failed to upload and process report document.');
-      setStage('IDLE');
-    }
-  };
-
-  const handleParamChange = (index, field, value) => {
-    const updated = [...extractedReview];
-    updated[index][field] = value;
-    // Mark as updated by clinician
-    updated[index].reviewStatus = 'CONFIRMED_BY_CLINICIAN';
-    setExtractedReview(updated);
-  };
-
-  const handleSaveToRecord = async () => {
-    if (!uploadedReport?.reportId) return;
-    setSavingReview(true);
-    setApiError('');
-
-    try {
-      const payloadParams = extractedReview.map((p) => ({
-        testName: p.test,
-        observedValue: p.value,
-        unit: p.unit,
-        normalRange: p.normalRange,
-        status: p.status,
-        reviewStatus: 'CONFIRMED_BY_CLINICIAN',
-      }));
-
-      await api.patch(
-        `/v1/patients/${encodeURIComponent(pid)}/reports/${encodeURIComponent(uploadedReport.reportId)}/review`,
-        {
-          extractedParameters: payloadParams,
-          clinicianNotes: doctorNotes,
+      if (realFileObject) {
+        const formData = new FormData();
+        formData.append('document', realFileObject);
+        formData.append('reportType', reportType);
+        if (doctorNotes) {
+          formData.append('clinicianNotes', doctorNotes);
         }
-      );
 
-      setStage('SAVED');
+        const response = await api.post(`/v1/patients/${encodeURIComponent(pid)}/reports/upload`, formData, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+          onUploadProgress: (progressEvent) => {
+            if (progressEvent.total) {
+              const pct = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+              setUploadProgress(pct);
+            }
+          }
+        });
+
+        const reportId = response.data?.reportId || response.reportId || 'REP-2026-001';
+        navigate(`/patients/${pid}/reports/${reportId}`);
+      } else {
+        // Fallback for visual demo
+        setTimeout(() => {
+          setUploading(false);
+          navigate(`/patients/${pid}/reports/REP-2026-001`);
+        }, 1200);
+      }
     } catch (err) {
-      setApiError(err.message || 'Failed to confirm reviewed report parameters.');
-    } finally {
-      setSavingReview(false);
+      setError(err.message || 'Failed to process report document with OCR service.');
+      setUploading(false);
     }
-  };
-
-  const handleReset = () => {
-    setStage('IDLE');
-    setSelectedFile(null);
-    setUploadProgress(0);
-    setValidationError('');
-    setApiError('');
-    setUploadedReport(null);
   };
 
   return (
     <div className="space-y-6">
-      <Link
-        to={`/patients/${pid}/reports`}
-        className="inline-flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-800 transition font-medium"
-      >
-        <ArrowLeft className="w-3.5 h-3.5" />
-        Back to Reports List
-      </Link>
+      {/* Top Breadcrumb Navigation */}
+      <div className="flex items-center gap-2 text-xs text-slate-500 font-medium">
+        <Link to={`/patients/${pid}/history`} className="hover:text-blue-600 transition">Medical History</Link>
+        <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
+        <span className="font-mono font-semibold text-slate-700">{pid}</span>
+        <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
+        <span className="font-semibold text-navy-900">Add to Medical History</span>
+      </div>
 
-      <PageTitle
-        title="Upload Diagnostic Report"
-        subtitle={`Submit lab document or radiology scan for automated OCR & NLP extraction (${pid})`}
-        badge="Screen 6 of Workflow"
-      />
+      {/* Main Header Matching Screen 06 */}
+      <div className="flex items-start gap-4">
+        <div className="w-12 h-12 rounded-2xl bg-[#DDF7EC] border border-[#A7F3D0] text-emerald-700 flex items-center justify-center shrink-0 shadow-xs">
+          <FileUp className="w-6 h-6 text-emerald-700" />
+        </div>
+        <div>
+          <h1 className="text-xl sm:text-2xl font-bold font-heading text-navy-900 tracking-tight">
+            Add to Medical History
+          </h1>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Upload new reports or add prescriptions to the patient's medical record.
+          </p>
+        </div>
+      </div>
 
-      <div className="max-w-3xl mx-auto">
-        <div className="bg-white rounded-3xl border border-slate-200/80 shadow-xs p-6 sm:p-8">
-          {validationError && (
-            <div className="mb-5 p-3.5 rounded-2xl bg-amber-50 border border-amber-200 text-xs text-amber-800 font-medium flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
-              <span>{validationError}</span>
+      {/* Patient Summary Banner (Screen 06 Reference) */}
+      <div className="bg-white rounded-3xl border border-slate-200/80 shadow-xs p-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div className="flex items-center gap-4">
+          <div className="w-11 h-11 rounded-full bg-blue-600 text-white flex items-center justify-center font-bold font-heading text-lg shrink-0">
+            R
+          </div>
+          <div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="font-mono font-bold text-xs bg-slate-100 text-slate-800 px-2 py-0.5 rounded border border-slate-200">
+                {pid}
+              </span>
+              <h2 className="text-sm font-bold font-heading text-navy-900">
+                Rahul Sharma
+              </h2>
             </div>
-          )}
+            <p className="text-xs text-slate-500 font-medium mt-1">
+              Age: <strong>32</strong> &nbsp;|&nbsp; Gender: <strong>Male</strong> &nbsp;|&nbsp; Blood Group: <strong>B+</strong>
+            </p>
+          </div>
+        </div>
 
-          {apiError && (
-            <div className="mb-5 p-3.5 rounded-2xl bg-rose-50 border border-rose-200 text-xs text-rose-700 font-medium flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
-              <span>{apiError}</span>
+        {/* Mint Authorization Pill */}
+        <div className="inline-flex items-center gap-2 px-3.5 py-2 rounded-2xl bg-[#DDF7EC] border border-[#A7F3D0] text-emerald-900 text-xs font-semibold">
+          <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+          <span>Patient Authorization Verified • Valid for: <strong>24 hours</strong></span>
+        </div>
+      </div>
+
+      {/* Top Tabs: Upload Medical Report vs Add Prescription */}
+      <div className="flex items-center gap-2 border-b border-slate-200 pb-1">
+        <button
+          onClick={() => setActiveTab('upload')}
+          className={`px-5 py-2.5 rounded-xl text-xs font-bold transition flex items-center gap-2 ${
+            activeTab === 'upload'
+              ? 'bg-[#0B2450] text-white shadow-sm'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+          }`}
+        >
+          <FileText className="w-4 h-4" />
+          <span>Upload Medical Report</span>
+        </button>
+
+        <button
+          onClick={() => navigate(`/patients/${pid}/prescriptions/new`)}
+          className="px-5 py-2.5 rounded-xl text-xs font-bold text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition flex items-center gap-2"
+        >
+          <Pill className="w-4 h-4" />
+          <span>Add Prescription</span>
+        </button>
+      </div>
+
+      {/* 2-Column Layout Matching Screen 06 */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        
+        {/* LEFT COLUMN: Upload Medical Report (7 cols) */}
+        <div className="lg:col-span-7 space-y-5">
+          <div className="bg-white rounded-3xl border border-slate-200/80 shadow-xs p-6 space-y-5">
+            <h2 className="text-sm font-bold font-heading text-navy-900">
+              Upload Medical Report
+            </h2>
+
+            {/* Drag & Drop Upload Zone */}
+            <div
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+              onClick={() => fileInputRef.current?.click()}
+              className={`border-2 border-dashed rounded-3xl p-8 text-center cursor-pointer transition-all ${
+                isDragging
+                  ? 'border-blue-500 bg-blue-50/70'
+                  : 'border-slate-200 bg-[#FAFBFD] hover:bg-slate-50 hover:border-slate-300'
+              }`}
+            >
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".pdf,.jpg,.jpeg,.png"
+                onChange={handleFileSelect}
+                className="hidden"
+              />
+
+              <div className="w-14 h-14 rounded-2xl bg-blue-50 text-blue-600 border border-blue-200 flex items-center justify-center mx-auto mb-3 shadow-xs">
+                <Upload className="w-7 h-7" />
+              </div>
+
+              <p className="text-xs font-bold text-navy-900 font-heading">
+                Drag and drop your report here, or
+              </p>
+              
+              <button
+                type="button"
+                className="mt-2.5 px-4 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs transition shadow-xs"
+              >
+                Select File
+              </button>
+
+              <div className="flex items-center justify-center gap-2 mt-4">
+                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200">
+                  PDF
+                </span>
+                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200">
+                  JPG
+                </span>
+                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200">
+                  PNG
+                </span>
+                <span className="text-[11px] text-slate-400 ml-1">Up to 15MB</span>
+              </div>
             </div>
-          )}
 
-          {/* STEP 1: UPLOAD FORM */}
-          {stage === 'IDLE' && (
-            <form onSubmit={handleStartUpload} className="space-y-6">
-              {/* Report Type selector */}
+            {/* File Selected / Uploading Progress Box (Matching Screen 06) */}
+            {selectedFile && (
+              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-rose-50 border border-rose-200 text-rose-600 flex items-center justify-center shrink-0">
+                      <FileText className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <p className="text-xs font-bold text-navy-900 truncate max-w-[240px]">
+                        {selectedFile.name}
+                      </p>
+                      <p className="text-[11px] text-slate-400">
+                        {(selectedFile.size / (1024 * 1024)).toFixed(1)} MB
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleRemoveFile}
+                    className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-200/60 transition"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                {/* Progress bar */}
+                <div>
+                  <div className="flex justify-between text-[11px] font-medium text-slate-500 mb-1">
+                    <span>{uploadProgress}% Uploading... Please wait</span>
+                    <span className="font-bold text-blue-600">{uploadProgress}%</span>
+                  </div>
+                  <div className="w-full h-2 rounded-full bg-slate-200 overflow-hidden">
+                    <div
+                      className="h-full bg-blue-600 rounded-full transition-all duration-300"
+                      style={{ width: `${uploadProgress}%` }}
+                    ></div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Form Fields: Report Type & Clinician Notes */}
+            <div className="space-y-4 pt-1">
               <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
-                  Diagnostic Report Category
+                <label className="block text-xs font-bold text-navy-900 mb-1.5 font-heading">
+                  Report Type / Category
                 </label>
                 <select
                   value={reportType}
                   onChange={(e) => setReportType(e.target.value)}
-                  className="w-full px-4 py-3 rounded-2xl border border-slate-200 bg-white text-xs font-medium text-slate-800 focus:outline-none focus:border-teal-500"
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs text-navy-900 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 font-medium"
                 >
-                  <option value="Complete Blood Count (CBC)">Complete Blood Count (CBC) Panel</option>
-                  <option value="Clinical Biochemistry / Liver Profile">Clinical Biochemistry / Liver Profile</option>
-                  <option value="Renal Function & Electrolytes">Renal Function & Electrolytes</option>
-                  <option value="Lipid & Blood Glucose Profile">Lipid & Blood Glucose Profile</option>
-                  <option value="Radiology / Chest X-Ray">Radiology / Chest X-Ray</option>
-                  <option value="Routine Urinalysis">Routine Urinalysis Panel</option>
+                  <option value="Complete Blood Count (CBC)">Complete Blood Count (CBC)</option>
+                  <option value="Biochemistry & Liver Function">Biochemistry & Liver Function</option>
+                  <option value="Lipid Profile & Glucose">Lipid Profile & Glucose Fasting</option>
+                  <option value="Urine Routine & Microscopic">Urine Routine & Microscopic</option>
+                  <option value="Chest X-Ray PA View">Chest X-Ray PA View</option>
+                  <option value="Thyroid Profile (T3, T4, TSH)">Thyroid Profile (T3, T4, TSH)</option>
                 </select>
               </div>
 
-              {/* Drag and Drop Zone */}
               <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
-                  Select Document (PDF, PNG, JPG - Max 15MB)
-                </label>
-                <div
-                  onClick={() => document.getElementById('report-file-input').click()}
-                  className={`border-2 border-dashed rounded-3xl p-8 text-center cursor-pointer transition ${
-                    selectedFile
-                      ? 'border-teal-400 bg-teal-50/40'
-                      : 'border-slate-200 hover:border-teal-400 hover:bg-slate-50/50'
-                  }`}
-                >
-                  <input
-                    id="report-file-input"
-                    type="file"
-                    accept=".pdf,image/png,image/jpeg,image/jpg"
-                    onChange={handleFileChange}
-                    className="hidden"
-                  />
-                  <div className="w-12 h-12 rounded-2xl bg-pastel-blue text-blue-600 flex items-center justify-center mx-auto mb-3 border border-pastel-blue-border">
-                    <Upload className="w-6 h-6 text-blue-600" />
-                  </div>
-                  {selectedFile ? (
-                    <div>
-                      <p className="text-xs font-bold text-slate-800">{selectedFile.name}</p>
-                      <p className="text-[11px] text-teal-700 font-mono mt-0.5">
-                        {(selectedFile.size / (1024 * 1024)).toFixed(2)} MB • Ready for OCR analysis
-                      </p>
-                    </div>
-                  ) : (
-                    <div>
-                      <p className="text-xs font-bold text-slate-700">
-                        Click or drag medical sheet to upload
-                      </p>
-                      <p className="text-[11px] text-slate-400 mt-1">
-                        Encrypted PDFs rejected • Tesseract OCR & spaCy NLP automatically applied
-                      </p>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Clinician Notes */}
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
-                  Clinician Observational Notes
+                <label className="block text-xs font-bold text-navy-900 mb-1.5 font-heading">
+                  Clinician Notes (Optional)
                 </label>
                 <textarea
-                  rows={3}
+                  rows={2}
                   value={doctorNotes}
                   onChange={(e) => setDoctorNotes(e.target.value)}
-                  placeholder="Clinical indication or preliminary physician notes..."
-                  className="w-full px-4 py-3 rounded-2xl border border-slate-200 bg-slate-50/50 text-xs font-medium text-slate-800 focus:outline-none focus:border-teal-500 focus:bg-white transition"
+                  placeholder="Add any specific clinical observations or symptoms..."
+                  className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-xs text-navy-900 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 font-sans"
                 />
               </div>
-
-              {/* Submit CTA */}
-              <button
-                type="submit"
-                className="w-full py-3.5 px-4 bg-teal-600 hover:bg-teal-700 text-white font-bold text-sm rounded-2xl transition shadow-md shadow-teal-700/20 flex items-center justify-center gap-2"
-              >
-                <Sparkles className="w-4 h-4 text-teal-200" />
-                <span>Upload & Extract with Python OCR Service</span>
-              </button>
-            </form>
-          )}
-
-          {/* STEP 2: UPLOADING & PROCESSING */}
-          {stage === 'UPLOADING' && (
-            <div className="py-12 text-center space-y-4">
-              <div className="w-14 h-14 bg-teal-50 text-teal-600 rounded-2xl flex items-center justify-center mx-auto border border-teal-200">
-                <Loader2 className="w-7 h-7 animate-spin text-teal-600" />
-              </div>
-              <h3 className="text-base font-bold font-heading text-navy-900">
-                Uploading Document to Private Storage...
-              </h3>
-              <p className="text-xs text-slate-500">
-                Streaming {selectedFile?.name} to backend and invoking Python Tesseract OCR & NLP
-              </p>
-
-              <div className="max-w-md mx-auto w-full bg-slate-100 rounded-full h-2.5 overflow-hidden">
-                <div
-                  className="bg-teal-600 h-2.5 rounded-full transition-all duration-300"
-                  style={{ width: `${uploadProgress}%` }}
-                ></div>
-              </div>
-              <span className="text-xs font-mono font-bold text-teal-700">{uploadProgress}%</span>
             </div>
-          )}
 
-          {/* STEP 3: EXTRACTED DATA REVIEW BEFORE SAVING */}
-          {stage === 'REVIEW' && (
-            <div className="space-y-6 animate-in fade-in duration-150">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
-                <div>
-                  <h3 className="text-base font-bold font-heading text-navy-900 flex items-center gap-2">
-                    <span>Review Extracted Parameters</span>
-                    <span className="text-xs font-mono bg-teal-50 text-teal-700 px-2 py-0.5 rounded border border-teal-200">
-                      {uploadedReport?.reportId}
-                    </span>
-                  </h3>
-                  <p className="text-xs text-slate-500">
-                    Verify and correct any uncertain values before confirming official clinical record
-                  </p>
-                </div>
-                <span className="text-xs font-semibold px-2.5 py-1 bg-pastel-mint text-emerald-800 rounded-lg border border-pastel-mint-border flex items-center gap-1 self-start sm:self-auto">
-                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                  OCR Digitization Complete
-                </span>
+            {error && (
+              <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700 flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                <span>{error}</span>
               </div>
+            )}
 
-              {/* Clinical findings alert */}
-              {nlpFindings.length > 0 && (
-                <div className="p-4 rounded-2xl bg-pastel-blue/60 border border-pastel-blue-border text-xs text-navy-900 space-y-1">
-                  <span className="font-bold text-blue-900 block flex items-center gap-1.5">
-                    <Sparkles className="w-3.5 h-3.5 text-blue-600" />
-                    Automated Clinical NLP Impressions:
-                  </span>
-                  <ul className="list-disc list-inside space-y-0.5 text-slate-700">
-                    {nlpFindings.map((finding, idx) => (
-                      <li key={idx}>{finding}</li>
-                    ))}
-                  </ul>
-                </div>
+            {/* Primary Button: Upload & Analyze (Matching Screen 06) */}
+            <button
+              onClick={handleUploadAndAnalyze}
+              disabled={uploading}
+              className="w-full py-3 px-5 rounded-2xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs transition shadow-md shadow-blue-600/20 flex items-center justify-center gap-2"
+            >
+              {uploading ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Processing OCR & NLP Entity Extraction...</span>
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-4 h-4" />
+                  <span>Upload & Analyze</span>
+                </>
               )}
+            </button>
 
-              {/* Extracted table preview with inline editing */}
-              <div className="overflow-x-auto rounded-2xl border border-slate-200">
-                <table className="w-full text-left text-xs">
-                  <thead className="bg-slate-50 text-slate-500 uppercase tracking-wider font-semibold border-b border-slate-200">
-                    <tr>
-                      <th className="px-4 py-3">Parameter</th>
-                      <th className="px-4 py-3">Parsed Value</th>
-                      <th className="px-4 py-3">Unit</th>
-                      <th className="px-4 py-3">Reference Range</th>
-                      <th className="px-4 py-3">Candidate Flag</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {extractedReview.length === 0 ? (
-                      <tr>
-                        <td colSpan={5} className="px-4 py-6 text-center text-slate-400">
-                          No specific laboratory parameters extracted. Check original document view.
-                        </td>
-                      </tr>
-                    ) : (
-                      extractedReview.map((item, idx) => (
-                        <tr key={idx} className="hover:bg-slate-50">
-                          <td className="px-4 py-3 font-bold text-navy-900">
-                            <input
-                              type="text"
-                              value={item.test}
-                              onChange={(e) => handleParamChange(idx, 'test', e.target.value)}
-                              className="w-full bg-transparent font-bold text-navy-900 border-b border-transparent hover:border-slate-300 focus:border-teal-500 focus:outline-none"
-                            />
-                          </td>
-                          <td className="px-4 py-3 font-mono font-bold text-navy-900">
-                            <input
-                              type="text"
-                              value={item.value}
-                              onChange={(e) => handleParamChange(idx, 'value', e.target.value)}
-                              className="w-20 px-2 py-1 rounded bg-slate-100 font-mono font-bold text-navy-900 border border-slate-200 focus:bg-white focus:border-teal-500 focus:outline-none"
-                            />
-                          </td>
-                          <td className="px-4 py-3 text-slate-500">
-                            <input
-                              type="text"
-                              value={item.unit}
-                              onChange={(e) => handleParamChange(idx, 'unit', e.target.value)}
-                              placeholder="unit"
-                              className="w-16 px-1.5 py-1 rounded bg-transparent text-slate-600 border border-transparent hover:border-slate-200 focus:bg-white focus:border-teal-500 focus:outline-none"
-                            />
-                          </td>
-                          <td className="px-4 py-3 text-slate-500">
-                            <input
-                              type="text"
-                              value={item.normalRange}
-                              onChange={(e) => handleParamChange(idx, 'normalRange', e.target.value)}
-                              placeholder="e.g. 13.0 - 17.0"
-                              className="w-28 px-1.5 py-1 rounded bg-transparent text-slate-600 border border-transparent hover:border-slate-200 focus:bg-white focus:border-teal-500 focus:outline-none"
-                            />
-                          </td>
-                          <td className="px-4 py-3">
-                            <select
-                              value={item.status}
-                              onChange={(e) => handleParamChange(idx, 'status', e.target.value)}
-                              className="text-xs font-semibold px-2 py-1 rounded-md border border-slate-200 bg-white"
-                            >
-                              <option value="Normal">Normal</option>
-                              <option value="Low">Low</option>
-                              <option value="High">High</option>
-                              <option value="Abnormal">Abnormal</option>
-                            </select>
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-
-              <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2">
-                <button
-                  type="button"
-                  onClick={handleReset}
-                  className="w-full sm:w-auto px-4 py-2.5 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-700 font-semibold text-xs transition inline-flex items-center justify-center gap-1.5"
-                >
-                  <RotateCcw className="w-3.5 h-3.5" />
-                  <span>Discard & Re-upload</span>
-                </button>
-                <button
-                  type="button"
-                  disabled={savingReview}
-                  onClick={handleSaveToRecord}
-                  className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-700 disabled:opacity-60 text-white font-bold text-xs transition shadow-sm shadow-teal-700/20 inline-flex items-center justify-center gap-1.5"
-                >
-                  {savingReview ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <Save className="w-4 h-4" />
-                  )}
-                  <span>Confirm & Save to Record</span>
-                </button>
-              </div>
+            {/* Info Pill */}
+            <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200/80 flex items-center gap-2 text-[11px] text-slate-500">
+              <Info className="w-4 h-4 text-blue-500 shrink-0" />
+              <span>
+                Reports are analyzed using <strong>OCR (Tesseract)</strong> and <strong>NLP (spaCy)</strong> to extract structured clinical data.
+              </span>
             </div>
-          )}
+          </div>
+        </div>
 
-          {/* STEP 4: SAVED NOTIFICATION & CLINICAL ACTIONS */}
-          {stage === 'SAVED' && (
-            <div className="py-8 text-center space-y-5 animate-in fade-in zoom-in-95 duration-200">
-              <div className="w-16 h-16 bg-emerald-50 text-emerald-600 rounded-3xl flex items-center justify-center mx-auto border border-emerald-200 shadow-xs">
-                <CheckCircle2 className="w-8 h-8" />
-              </div>
+        {/* RIGHT COLUMN: Add a Prescription & Privacy (5 cols) */}
+        <div className="lg:col-span-5 space-y-5">
+          
+          {/* Card 1: Add a Prescription (Screen 06 Reference) */}
+          <div className="bg-white rounded-3xl border border-slate-200/80 shadow-xs p-6 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <div>
-                <h3 className="text-lg font-bold font-heading text-navy-900">
-                  Report Reviewed & Committed to Record!
-                </h3>
-                <p className="text-xs text-slate-500 mt-1">
-                  Report <span className="font-mono font-bold text-teal-700">{uploadedReport?.reportId}</span> is now permanently recorded under {pid}.
+                <h2 className="text-sm font-bold font-heading text-navy-900">
+                  Add a Prescription
+                </h2>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Create digital prescription with medication, dosage, and instructions.
                 </p>
               </div>
-
-              {/* Next Steps Buttons */}
-              <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-3">
-                <button
-                  onClick={() => navigate(`/patients/${pid}/reports/${uploadedReport?.reportId || 'REP-001'}`)}
-                  className="w-full sm:w-auto px-5 py-2.5 rounded-2xl bg-white border border-slate-200 hover:bg-slate-50 text-slate-800 font-semibold text-xs transition inline-flex items-center justify-center gap-2 shadow-xs"
-                >
-                  <ExternalLink className="w-3.5 h-3.5 text-slate-500" />
-                  <span>Dual-Panel Report View</span>
-                </button>
-
-                <button
-                  onClick={() => navigate(`/patients/${pid}/prescriptions/new`)}
-                  className="w-full sm:w-auto px-5 py-2.5 rounded-2xl bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs transition shadow-sm shadow-teal-700/20 inline-flex items-center justify-center gap-2"
-                >
-                  <Pill className="w-3.5 h-3.5 text-teal-200" />
-                  <span>Issue New Prescription</span>
-                </button>
-
-                <button
-                  onClick={() => navigate(`/patients/${pid}/history`)}
-                  className="w-full sm:w-auto px-4 py-2.5 rounded-2xl text-slate-600 hover:text-slate-900 text-xs font-semibold"
-                >
-                  Return to Patient History
-                </button>
+              <div className="w-10 h-10 rounded-2xl bg-[#EFE7FF] border border-[#D8C5FD] text-purple-700 flex items-center justify-center shrink-0">
+                <ClipboardList className="w-5 h-5 text-purple-700" />
               </div>
             </div>
-          )}
+
+            {/* Feature Checklist */}
+            <div className="space-y-2.5 text-xs text-slate-700 font-medium">
+              <div className="flex items-center gap-2.5">
+                <div className="w-4 h-4 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center text-[10px]">
+                  ✓
+                </div>
+                <span>Drug name with auto-complete</span>
+              </div>
+              <div className="flex items-center gap-2.5">
+                <div className="w-4 h-4 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center text-[10px]">
+                  ✓
+                </div>
+                <span>Dosage, frequency, and duration</span>
+              </div>
+              <div className="flex items-center gap-2.5">
+                <div className="w-4 h-4 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center text-[10px]">
+                  ✓
+                </div>
+                <span>Direct sync with patient pharmacy record</span>
+              </div>
+            </div>
+
+            {/* Solid Purple CTA Button: + Create Prescription */}
+            <button
+              onClick={() => navigate(`/patients/${pid}/prescriptions/new`)}
+              className="w-full py-3 px-4 rounded-2xl bg-[#7C3AED] hover:bg-purple-700 text-white font-bold text-xs transition shadow-sm shadow-purple-600/20 flex items-center justify-center gap-2"
+            >
+              <Pill className="w-4 h-4" />
+              <span>+ Create Prescription</span>
+            </button>
+          </div>
+
+          {/* Card 2: Patient Data is Private (#DDF7EC Mint) */}
+          <div className="p-5 rounded-3xl bg-[#DDF7EC] border border-[#A7F3D0] space-y-2">
+            <div className="flex items-center gap-2.5">
+              <div className="w-7 h-7 rounded-full bg-emerald-600 text-white flex items-center justify-center shrink-0 text-xs">
+                <Lock className="w-3.5 h-3.5" />
+              </div>
+              <h3 className="text-xs font-bold font-heading text-emerald-950">
+                Patient Data is Private
+              </h3>
+            </div>
+            <p className="text-[11px] text-emerald-800 font-medium leading-relaxed pl-9">
+              All uploaded medical records and issued prescriptions are encrypted and accessible only with explicit patient consent and authorized active session tokens.
+            </p>
+          </div>
+
         </div>
+
       </div>
     </div>
   );
