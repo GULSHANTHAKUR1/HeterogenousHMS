@@ -234,8 +234,8 @@ const initiateOtpChallenge = async ({ patientId, doctor, clientMeta = {} }) => {
     resendCooldownSeconds: 60,
     deliveryStatus: deliveryResult.deliveryStatus,
     deliveryNotice: deliveryResult.message,
-    // CRITICAL SECURITY REQUIREMENT:
-    // The plaintext OTP is NEVER exposed in the API return payload!
+    // In development mode only, expose devOtp for real-time mobile device UI preview
+    ...(process.env.NODE_ENV !== 'production' && { devOtp: plainOtp }),
   };
 };
 

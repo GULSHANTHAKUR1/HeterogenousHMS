@@ -33,6 +33,12 @@ def read_root():
     }
 
 
+@app.get("/health")
+def read_health_alias():
+    return health.get_health()
+
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host=settings.HOST, port=settings.PORT, reload=True)

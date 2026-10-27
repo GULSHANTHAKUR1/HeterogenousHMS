@@ -49,6 +49,7 @@ backend/storage/uploads/
 *.png
 *.jpg
 *.jpeg
+!frontend/public/*
 
 # IDE & OS Files
 .idea/

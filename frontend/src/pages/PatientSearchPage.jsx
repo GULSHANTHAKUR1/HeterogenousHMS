@@ -36,8 +36,10 @@ export default function PatientSearchPage() {
 
       setSearchStatus(`Dispatching verification code to ${patientSummary.contactNumberMasked}...`);
       // 2. Initiate OTP challenge
+      let activeDevOtp = '';
       try {
-        await api.post(`/v1/patients/${encodeURIComponent(cleanPid)}/challenge-otp`);
+        const chalRes = await api.post(`/v1/patients/${encodeURIComponent(cleanPid)}/challenge-otp`);
+        activeDevOtp = chalRes.data?.devOtp || chalRes.devOtp || '';
       } catch (challengeErr) {
         // If challenge is already active within cooldown, we still proceed to verify screen
         if (challengeErr.code !== 'RESEND_COOLDOWN_ACTIVE') {
@@ -49,7 +51,7 @@ export default function PatientSearchPage() {
       navigate(
         `/patients/verify?pid=${encodeURIComponent(cleanPid)}&maskedPhone=${encodeURIComponent(
           patientSummary.contactNumberMasked || '+91 98765-XXXXX'
-        )}`
+        )}${activeDevOtp ? `&devOtp=${encodeURIComponent(activeDevOtp)}` : ''}`
       );
     } catch (err) {
       setError(err.message || 'Unable to locate patient record. Please check the Patient ID.');
